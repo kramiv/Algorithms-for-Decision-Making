@@ -1,0 +1,323 @@
+---
+title: "Introduction to Decision Trees"
+author: "Jaime Davila"
+date: "4/18/2021"
+output:
+  pdf_document: default
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.show="hide", results=FALSE)
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+library(rpart)
+library(rpart.plot)
+```
+
+# Introduction
+
+On today's class we will be using a dataset collated from the popular animated series, Scooby Doo:
+
+```{r echo=TRUE, results=TRUE}
+(scooby.tbl <- read_csv("~/Mscs 341 S22/Class/Data/scooby.csv") %>%
+  mutate(monster_real=factor(monster_real)))
+table(scooby.tbl$monster_real)
+```
+
+In particular we are interested in predicting whether or not the monster in the episode is a real or fake based on the year that the episode was aired and how well liked it was on imdb. A preliminary plot shows the relationship across variables:
+
+
+```{r echo=TRUE, fig.show="hide"}
+scooby.tbl %>%
+   ggplot(aes(imdb, year_aired))+
+    geom_jitter(alpha = 0.7, width = 0.05, 
+              height = 0.2, aes(color = monster_real))
+```
+
+And as usual we will set-up or training/testing dataset:
+
+```{r echo=TRUE, results=TRUE}
+set.seed(123)
+scooby.split <- initial_split(scooby.tbl)
+scooby.train.tbl <- training(scooby.split)
+scooby.test.tbl <- testing(scooby.split)
+```
+
+# Recursive partitioning trees
+
+Decisions trees introduce a completely new idea for making predictions. The fundamental  idea, as the name implies, is to use a **tree** as the means of making a decisions. The tree is built on a sequence of decisions based on the predictor variables. 
+
+The easiest way to show a decision is to do an example using our dataset. A couple of things to notice from our code are:
+
+* We use the library `rpart` 
+* We will be making use of trees with 2 only levels (notice the parameter `tree_depth` below)
+
+```{r echo=TRUE, results=TRUE}
+library(recipes)
+scooby.model <-
+  decision_tree(tree_depth=2) %>%
+  set_mode("classification") %>%
+  set_engine("rpart")
+
+scooby.recipe <- recipe(monster_real ~ imdb+year_aired,
+                 data=scooby.train.tbl)
+
+scooby.wflow <- workflow() %>%
+    add_recipe(scooby.recipe) %>%
+    add_model(scooby.model) 
+
+scooby.fit <- fit(scooby.wflow, scooby.train.tbl)
+```
+
+Finally notice that we can get a text output of our tree by using `scooby.fit`
+
+```{r echo=TRUE, results=TRUE}
+scooby.fit
+```
+
+A better way to visualize our decision tree is to use the library `rpart.plot`
+
+```{r echo=TRUE, fig.show='asis'}
+library(rpart.plot)
+scooby.fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+1. 
+    a. Talk for a couple of minutes to the people in your group about how to interpret all of the elements of the previous visualization.
+
+root: 100% of observations. 0.22 is percent of observations that are real (majority are fake). (and 0.78 of observations are fake)
+
+If rating is above 6.2, go to bottom left node. 93% of the data is on the left tree. In this smaller dataset, 0.18 of the time the monster is real. So if I have to choose a class in that node, the majority is fake. 
+
+bottom right: .88 of observations are real (so the box is called real). That is 7% of the original data.
+
+goal: select variable and threshold to minimize MSE. "purity" score. 
+
+    b. Look in page 336 of ISLR for definition of the Gini index and entropy. Why are those two quantities a measure of the "purity" of your partition? In what context are those two measures used?
+
+Gini index measures inequality for 2 classes - says if one of the classes is dominant in the proportion. 
+
+Gini index has a formula. Gini index: 0 means everyone is in the same class for a particular node.
+
+Suppose where half are fake montsers, half are real: 
+.5(1-.5) + .5(1-.5) = .5
+
+Gini index measures how pure a set is in a particular class. 
+
+goal: we want each variable to correspond to a single class. Goal = 0. 
+
+Another way to visualize the data when you have only two predictors is to use the library `partree` as below
+
+```{r echo=TRUE, fig.show='asis'}
+library(parttree)
+scooby.train.tbl %>%
+  ggplot(aes(imdb, year_aired)) +
+  geom_parttree(data = scooby.fit, 
+                aes(fill = monster_real), alpha = 0.2) +
+  geom_jitter(alpha = 0.7, width = 0.05, 
+              height = 0.2, aes(color = monster_real))
+```
+
+2. Calculate the accuracy and the confusion matrix using your testing dataset
+```{r}
+augment(scooby.fit, new_data = scooby.test.tbl) %>%
+  conf_mat(truth = monster_real, estimate = .pred_class)
+
+augment(scooby.fit, new_data = scooby.test.tbl) %>%
+  accuracy(truth = monster_real, estimate = .pred_class)
+```
+accuracy = 0.817
+
+better at classifying fake monsters than real monsters. 
+
+3. Calculate the accuracy of your model on your testing dataset for `tree_depth` values of 3, 5, 10 and visualize your models using `rpart.plot`. How do the different models compare to each other? Make sure to define and use a function that takes `tree_depth` as parameter.
+
+```{r}
+part_plot <- function(tree_depth) {
+scooby.model <-
+  decision_tree(tree_depth=tree_depth) %>%
+  set_mode("classification") %>%
+  set_engine("rpart")
+scooby.recipe <- recipe(monster_real ~ imdb+year_aired,
+                 data=scooby.train.tbl)
+scooby.wflow <- workflow() %>%
+    add_recipe(scooby.recipe) %>%
+    add_model(scooby.model) 
+scooby.fit <- fit(scooby.wflow, scooby.train.tbl)
+}
+```
+
+```{r}
+part_plot(3) %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+augment(part_plot(3), new_data = scooby.test.tbl) %>%
+  accuracy(truth = monster_real, estimate = .pred_class)
+
+part_plot(5) %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+augment(part_plot(5), new_data = scooby.test.tbl) %>%
+  accuracy(truth = monster_real, estimate = .pred_class)
+
+part_plot(10) %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+augment(part_plot(10), new_data = scooby.test.tbl) %>%
+  accuracy(truth = monster_real, estimate = .pred_class)
+
+```
+3: 0.857
+5: 0.913
+10: 0.913
+
+3 to 5 shows an improvement, but there is no improvement betwee 5 and 10. 
+The trees for 5 and 10 look the same as well. "we are no longer decreasing the gini index"
+
+4. The complexity parameter (`cp` or `cost_complexity`) is a key metric that penalizes the construction of large trees. Create a function `test_cp_tree` which takes as input the complexity parameter and visualizes the model and outputs its accuracy. Test the function for values of `cp`= 0.01, 0.1, 1. What is the effect of the smaller value of `cp` on your tree model?
+
+```{r}
+test_cp_tree <- function(tree_depth, complexity_parameter) {
+  
+scooby.model <-
+  decision_tree(tree_depth=tree_depth,#
+                cost_complexity = complexity_parameter) %>%
+  set_mode("classification") %>%
+  set_engine("rpart")
+scooby.recipe <- recipe(monster_real ~ imdb+year_aired,
+                 data=scooby.train.tbl)
+scooby.wflow <- workflow() %>%
+    add_recipe(scooby.recipe) %>%
+    add_model(scooby.model) 
+scooby.fit <- fit(scooby.wflow, scooby.train.tbl)
+
+scooby.fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+
+augment(part_plot(5), new_data = scooby.test.tbl) %>%
+  accuracy(truth = monster_real, estimate = .pred_class)
+
+}
+```
+```{r}
+test_cp_tree(5, 0.01)
+test_cp_tree(5, 0.1)
+test_cp_tree(5, 1)
+```
+accuracy is .913 for all of them regardless of tree_depth.
+
+# Optimizing our parameters
+
+We are interested in optimizing our parameters using a cross-validation approach. As before the steps for doing so are:
+
+* Make sure the parameters that you will be optimizing are tuneable.
+* Create a cross validation dataset
+* Create a grid for searching the parameters in your dataset
+* Use `tune_grid` to optimize your function across the values of your grid
+
+```{r echo=TRUE}
+# Create the model with tuneable parameters
+scooby.model <-
+  decision_tree(tree_depth=tune(),
+                cost_complexity=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("rpart")
+
+  scooby.recipe <- recipe(monster_real ~ imdb+year_aired,
+                 data=scooby.train.tbl)
+
+  scooby.wflow <- workflow() %>%
+    add_recipe(scooby.recipe) %>%
+    add_model(scooby.model) 
+```
+
+
+```{r echo=TRUE}
+# Create the cross-validation dataset
+set.seed(1234)
+scooby.folds <- vfold_cv(scooby.train.tbl, v = 10)
+
+```
+
+```{r echo=TRUE}
+#Set up the grid
+scooby.grid <- 
+  grid_regular(cost_complexity(), tree_depth(), levels = 4)#note: two parameters
+
+scooby.grid
+```
+
+```{r echo=TRUE, fig.show='asis'}
+scooby.res <-
+  tune_grid(
+    scooby.wflow,
+    resamples = scooby.folds,
+    grid = scooby.grid,
+    metrics = metric_set(accuracy, roc_auc, sensitivity, specificity))
+
+```
+
+5. Visualize `scooby.res` and discuss the results with your group members.
+
+```{r}
+autoplot(scooby.res)
+```
+smaller values of cost-complexity is good. cost-complexity of 1 is bad. 
+Best tree depth is 15
+
+*****
+what about sensitivity? is it good if it's high or low?
+
+
+
+
+
+
+6. Use `select_by_one_std_err` using accuracy as your metric and sorting in descending order the penalty parameter. Check the help of ?select_by_one_std_err and page 236 of ISLR to explain how the "one-standard-error" rule works. Use this parameter to finalize your workflow and fit it. What is your accuracy using your testing dataset?
+
+prof recommends 1 std deviation rule. The point we plot on the cost-complexity paramater graph is actually a mean. The lines have 'whiskers'. We can pick a simpler model with less complexity to avoid overfitting. 
+
+```{r}
+#show_best(scooby.res, metric = "accuracy")
+
+(best.penalty <- select_by_one_std_err(scooby.res, 
+                                       metric = "accuracy", 
+                                       desc(cost_complexity)))
+```
+best tree depth = 5, cost_complexity = 0.0001
+```{r}
+tissue.final.wf <- finalize_workflow(scooby.wflow, best.penalty)
+tissue.final.fit <- fit(tissue.final.wf, data = scooby.train.tbl)
+
+augment(tissue.final.fit, new_data = scooby.test.tbl) %>%
+  accuracy(truth = monster_real, estimate = .pred_class)
+```
+
+Accuracy = 0.913
+
+********
+note how prof did it. my final plot does look teh same though. 
+
+Finally let's visualize our model on our training dataset using `parttree`
+
+```{r echo=TRUE, fig.show='asis'}
+scooby.train.tbl %>%
+  ggplot(aes(imdb, year_aired)) +
+  geom_parttree(data = tissue.final.fit, aes(fill = monster_real), alpha = 0.2) +
+  geom_jitter(alpha = 0.7, width = 0.05, height = 0.2, aes(color = monster_real))
+```
+
+# Acknowledgments
+
+This worksheet draw heavily on the following blog post from Julia Silge: https://juliasilge.com/blog/scooby-doo/
+
+
