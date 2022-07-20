@@ -1,0 +1,160 @@
+---
+title: "Using LASSO for classification"
+author: "Jaime Davila"
+date: "4/10/2021"
+output:
+  pdf_document: default
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.show="hide", results=FALSE)
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+library(glmnet)
+library(vip)
+```
+
+# Introduction 
+
+The package `dslabs` has the `tissue_gene_expression` dataset. This dataset contains the gene expression for 500 random genes (out of over 20,000 measured by a microarray) for 189 samples across seven different tissues. Let's load the dataset and take a look at some of the summary statistics:
+
+```{r echo=TRUE, results=TRUE}
+library(dslabs)
+data(tissue_gene_expression)
+str(tissue_gene_expression)
+
+dim(tissue_gene_expression$x)
+table(tissue_gene_expression$y)
+```
+
+## Setting up our dataset
+
+On a first iteration we are interested in creating a classifier function that will allow us to distinguish between `cerebellum` and `colon` based on their gene expression profile. We can do it as follows:
+
+```{r echo=TRUE, results=TRUE}
+tissue.levels<- c("cerebellum","colon")
+sample.ids <- tissue_gene_expression$y %in% tissue.levels
+
+tissue.gene.tbl <- tissue_gene_expression$x[sample.ids,] %>%
+  as_tibble() %>%
+  mutate(tissue = factor(tissue_gene_expression$y[sample.ids], levels=tissue.levels))
+```
+
+And let's divide dataset into training/testing datasets:
+
+```{r echo=TRUE, results=TRUE}
+set.seed(123456)
+tissue.split <- initial_split(tissue.gene.tbl, prop=0.5)
+tissue.train.tbl <- training(tissue.split)
+tissue.test.tbl <- testing(tissue.split)
+```
+
+Finally, let's check the dimension of the training dataset:
+
+```{r echo=TRUE, results=TRUE}
+dim(tissue.train.tbl)
+```
+
+Notice that we only have 36 observations and we have 500 variables!
+
+1. Talk to the people in your group and try to explain why logistic regression would not work using this training table.
+
+# Using LASSO for binary classification
+
+We would like to build a model that will allow us to predict the tissue type based on the gene expression. Furthermore we would like to identify a small number of features (variables) to use in this model. Given LASSO's ability to identify a small subset of variables, seems this method is particularly well-suited for the problem.
+
+Notice that we have used LASSO only for prediction so far, however `tidymodels` and `glmnet` allows us to use LASSO for classification by using the following syntax
+
+```{r echo=TRUE, results=TRUE}
+tissue.model <- 
+  logistic_reg(mixture = 1, penalty=tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+```
+
+2. Create a LASSO model and optimize the parameter $\lambda$ by following these steps
+
+    a. Create a recipe `tissue.recipe` that would predict tissue type. Justify whether or not  you need to use `step_dummy()` as a step in your recipe? How about `step_normalize()`? Create a `tissue.wf` workflow by combining the recipe and the model.
+
+    b. Create a 5 fold and a 10-fold cross validation dataset `tissue.fold.5` and `tissue.fold.10`. Create a grid `penalty.grid` between -2 and 0 on the log-scale with 20 values. Use `tune_grid()` and plot the effect of the penalty in your classification accuracy. Notice that when using 10-fold you get an error message that says **"No event observations were detected in `truth` with event level `colon`"**. Can you explain what this error means? Would using 5-fold cross validation get rid of this error? Why?
+
+```{r}
+set.seed(1234)
+tissue.fold.10
+tissue.fold.5 
+```
+    
+    c. Select the best penalty by using `select_by_one_std_err()` using accuracy as your metric and sorting in descending order the penalty parameter. Check the help of ?select_by_one_std_err and page 236 of ISLR to explain how the "one-standard-error" rule works. Use this parameter to finalize your workflow and fit. Calculate your confusion matrix using the testing dataset
+
+    d. Determine which coefficients in your LASSO model are non-zero. Do a quick google search for "GPM6B genecards". Does it make sense that this gene distinguishes between cerebellum and colon? Plot the values of these two genes in your training and testing dataset? Are the values of these two genes very different across the two tissue types?
+
+
+# Multiple tissue classification
+
+Now that we gained some confidence in distinguishing between two tissues, we would like to create a more complex classifier. First, let's take a look at the number of tissues in our dataset
+
+```{r echo=TRUE, results=TRUE}
+table(tissue_gene_expression$y)
+```
+
+It seems we don't have enough placenta tissues in our dataset, so we will exclude them from our dataset.
+
+```{r echo=TRUE, results=TRUE}
+placenta.idx <-which(tissue_gene_expression$y=="placenta")
+tissue_gene_expression$x <- tissue_gene_expression$x[-placenta.idx,]
+tissue_gene_expression$y <- droplevels(tissue_gene_expression$y[-placenta.idx])
+
+multiple.tissue.gene.tbl <- tissue_gene_expression$x[-placenta.idx,] %>%
+  as_tibble() %>%
+  mutate(tissue = droplevels(tissue_gene_expression$y[-placenta.idx]))
+
+table(multiple.tissue.gene.tbl$tissue)
+```
+
+And create a testing/training dataset
+
+```{r echo=TRUE, results=TRUE}
+set.seed(6543)
+tissue.split <- initial_split(multiple.tissue.gene.tbl, prop=0.5)
+multiple.tissue.train.tbl <- training(tissue.split)
+table(multiple.tissue.train.tbl$tissue)
+multiple.tissue.test.tbl <- testing(tissue.split)
+table(multiple.tissue.test.tbl$tissue)
+```
+
+Finally we can set up our model by making use of `multinom_reg()`
+
+```{r echo=TRUE, results=TRUE}
+tissue.model <- 
+  multinom_reg(mixture = 1, penalty=tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+```
+
+3. Create a LASSO model and use 5-fold cross validation and `select_by_one_std_err()` to determine the optimal penalty. What is the accuracy of LASSO on the testing dataset? How does the confusion matrix look on the testing dataset?
+
+```{r}
+set.seed(1234)
+multiple.tissue.fold 
+```
+
+
+
+4. 
+
+    a. Using the command `tidy()` determine the non-zero coefficients of your model (please remove the constant terms).  How do you interpret these terms? How many non-zero coefficients correspond to each tissue?
+
+    b. What is the gene that allows you to distinguish a liver? Do a google search of the gene plus genecards and see if it makes sense. Do a boxplot of the value of the gene across the tissues from your testing dataset and interpret it. Do a boxplot of the predicted probability of being a liver  across all the tissues from your testing dataset and interpret it.
+
+
+5. 
+
+    a. In your testing dataset there was a cerebellum that was missclassified as a kidney. Identify this observation and determine its predicted probability of being each distinct tissue.
+
+    b. Using your testing dataset do a boxplot of the predicted probability of being a cerebellum and the predicted probability of being a kidney. Can you identify the misclassified sample in the two boxplots?
+

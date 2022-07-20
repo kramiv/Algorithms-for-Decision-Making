@@ -1,0 +1,117 @@
+---
+title: "Preparing ADM's first data set"
+author: "Matt Richey/Jaime Davila"
+date: "2/13/2022"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+library(tidyverse)
+library(lubridate)
+```
+
+# Introduction
+Let's do a quick tour of some introductory concepts and programming. Our data will come from the [Minneapolis Open Data Portal](http://opendata.minneapolismn.gov/). In particular, we'll look at the Police Incidents from 2016 and 2017. 
+
+ * [Police Incidents 2016](https://opendata.minneapolismn.gov/datasets/police-incidents-2016)
+ * [Police Incidents 2017](https://opendata.minneapolismn.gov/datasets/police-incidents-2017)
+
+The goal is to try to predict the number of "incidents" as a function of the time of year, taking  care to account for the effects of the day of the week.  We will use one year (2016) as the "training" data and then see how it works on the other year (2017).
+
+
+# Set up
+Define some  variables for the file names.
+```{r}
+dataFile16 <- "~/Mscs 341 S22/Class/Data/Police_Incidents_2016.csv"
+dataFile17 <- "~/Mscs 341 S22/Class/Data/Police_Incidents_2017.csv"
+```
+
+
+Now we can load the data.
+```{r}
+data16.df0 <- read_csv(dataFile16, 
+                       col_types= (cols(ReportedDate=col_datetime(format="%Y/%m/%d %H:%M:%S")))) %>% 
+  select(ReportedDate,Time,UCRCode,Precinct) %>% 
+  mutate(year=2016)
+
+data17.df0 <- read_csv(dataFile17) %>% 
+  select(ReportedDate,Time,UCRCode,Precinct) %>% 
+  mutate(year=2017)
+
+## Row  bind these data
+data.df0 <- bind_rows(data16.df0,data17.df0)
+```
+
+
+Take a peek at how the UCR Codes are distributed.
+```{r}
+# Notice the use of with, which is equivalent to
+# table(data.df0$year, data.df0$UCRCode)
+with(data.df0,table(year,UCRCode))
+```
+
+Now we have to do some data wrangling. The key fields are:
+
+  * ReportedDate: the Date+Time that the report was filed.
+  * Time: the approximate time of the incident.
+  * UCRCode: These describe the type of incident
+      + 1 = MURDER
+      + 3 = RAPE
+      + 4 = ROBBERY
+      + 5 = ASSAULT
+      + 6 = BURGLARY
+      + 7 = LARCENY
+      + 8 = AUTO THEFT
+      + 10 = ARSON
+
+An annoying  feature of the this data is the `ReportedDate` field contains the day and time the incident was reported. The `Time` field contains the time the incident occurred (at least as described by the victim). The `ReportDate` could on, say, Wednesday, but the actual incident was on Tuesday. We need to correct for that.
+
+As well, we want to include information on the day of the week and the day of the year.
+```{r}
+data.df <- data.df0 %>% 
+  mutate(ReportedDateTime=ReportedDate,
+         ReportDate=date(ReportedDateTime),
+         ReportHour=hour(ReportedDateTime),
+         IncidentTime=Time,
+         IncidentHour=hour(IncidentTime),
+         ##Correct for previous day
+         IncidentDate=ReportDate-(IncidentHour > ReportHour),
+         ##decimal value of time.
+         time=hour(IncidentTime)+minute(IncidentTime)/60,
+         ##########################
+         ##correct the year.
+         year=factor(year(IncidentDate)),
+         ## day of year
+         yday=yday(IncidentDate),
+         ##month, of course
+         month=month(IncidentDate),
+          ## day of week (1=Monday)
+         wday=wday(IncidentDate, label=TRUE),
+         ## week of the year
+         week=week(IncidentDate),
+         )%>%
+         select(wday,week,yday,month,year,UCRCode,Precinct) %>%
+         filter(year==2016 | year==2017)
+```
+
+Finally, let's tally the number of incidents by the day of the week. 
+
+Now we can start counting......
+```{r}
+dataWeekDay.df <- data.df %>% 
+  ## WeekDay, YearDay, and Year
+  group_by(wday,week,year) %>% 
+  summarize(tot=n()) 
+```
+
+And let's save so that we can use it in class
+
+```{r}
+write_csv(dataWeekDay.df,"~/Mscs 341 S22/Class/Data/police_incidents.mn.csv")
+```
+
